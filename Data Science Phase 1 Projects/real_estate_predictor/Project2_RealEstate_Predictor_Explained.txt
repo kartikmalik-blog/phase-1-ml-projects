@@ -1,0 +1,563 @@
+================================================================
+🏠 PROJECT 2 — REAL ESTATE PRICE PREDICTOR
+    Complete Explanation From Start to Finish
+    Built by: Kartik | Munich | 2025
+================================================================
+
+WHAT IS THIS PROJECT?
+---------------------
+We built a Machine Learning model that looks at real Boston
+housing data and predicts the price of a house based on its
+features like number of rooms, crime rate, neighbourhood quality
+and more. This is a REGRESSION problem — we predict an actual
+number (price) instead of a category (yes/no).
+
+Dataset  : Boston Housing Dataset
+Source   : Kaggle (vikrishnan/boston-house-prices)
+File     : housing.csv
+Houses   : 506 real properties
+Features : 13 measurements per house
+Target   : MEDV — Median House Value in $1000s
+Result   : 88.3% R² Score (Decision Tree best model)
+
+KEY DIFFERENCE FROM PROJECT 1:
+    Project 1 = Classification → predict YES or NO (planet/no planet)
+    Project 2 = Regression     → predict a NUMBER (house price)
+    These are the 2 main types of Supervised Learning!
+
+
+================================================================
+CELL 1 — IMPORTING LIBRARIES
+================================================================
+
+CODE:
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from sklearn.model_selection import train_test_split, cross_val_score
+    from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+    from sklearn.linear_model import LinearRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+    from sklearn.tree import DecisionTreeRegressor
+    from sklearn.ensemble import RandomForestRegressor
+
+WHAT EACH NEW IMPORT DOES:
+---------------------------
+
+PolynomialFeatures
+    - Creates new features by combining existing ones
+    - degree=2 creates: x, x², x*y, y², etc.
+    - Allows the model to fit CURVED relationships (not just straight lines)
+    - Example: price vs rooms is not perfectly linear — it curves!
+
+Pipeline
+    - Chains multiple steps together into one object
+    - We use it to combine PolynomialFeatures + LinearRegression
+    - Benefit: can treat them as a single model for cross-validation
+    - Makes code cleaner and prevents data leakage
+
+mean_squared_error (MSE)
+    - Average of (predicted - actual)² for all houses
+    - Squares the errors so big mistakes are penalised heavily
+    - We take the square root to get RMSE (same units as price)
+
+mean_absolute_error (MAE)
+    - Average of |predicted - actual| for all houses
+    - More intuitive: "on average we are $X wrong"
+    - Less sensitive to outliers than MSE
+
+r2_score (R² Score)
+    - How much of the price variance our model explains
+    - 1.0 = perfect, 0.0 = no better than guessing the mean
+    - 0.8834 means we explain 88.34% of price differences
+
+DecisionTreeRegressor
+    - Same idea as DecisionTreeClassifier but for regression
+    - Instead of predicting a class, predicts a number
+    - Each leaf node returns the average price of training houses
+      that fell into that leaf
+
+RandomForestRegressor
+    - Imported but not used as main model (available for extension)
+    - Combines many Decision Trees for even better results
+    - This is Phase 2 territory — Ensemble Methods!
+
+
+================================================================
+CELL 2 — LOADING THE DATA
+================================================================
+
+CODE:
+    df = pd.read_csv('housing.csv', sep='\s+', header=None)
+    df.columns = ['CRIM', 'ZN', 'INDUS', 'CHAS', 'NOX', 'RM',
+                  'AGE', 'DIS', 'RAD', 'TAX', 'PTRATIO', 'B', 'LSTAT', 'MEDV']
+
+WHAT IT DOES:
+--------------
+
+sep='\s+'
+    - The Boston dataset uses SPACES between values (not commas)
+    - \s+ means "one or more whitespace characters"
+    - Without this, pandas reads the whole row as 1 column!
+    - This is a common real-world data cleaning issue
+
+header=None
+    - The file has no header row (no column names at the top)
+    - So we tell pandas not to look for one
+
+df.columns = [...]
+    - Manually assign column names to all 14 columns
+    - These are the official Boston Housing Dataset column names
+
+THE 13 FEATURES EXPLAINED:
+    CRIM     → Crime rate per capita in the town
+    ZN       → Proportion of residential land zoned for large lots
+    INDUS    → Proportion of industrial business acres per town
+    CHAS     → Charles River dummy variable (1=borders river, 0=doesn't)
+    NOX      → Nitric oxide concentration (air pollution level)
+    RM       → Average number of rooms per dwelling
+    AGE      → Proportion of owner-occupied units built before 1940
+    DIS      → Weighted distances to 5 Boston employment centres
+    RAD      → Index of accessibility to radial highways
+    TAX      → Full-value property-tax rate per $10,000
+    PTRATIO  → Pupil-teacher ratio by town (school quality indicator)
+    B        → 1000(Bk - 0.63)² where Bk = proportion of Black residents
+    LSTAT    → % lower status of the population
+
+THE TARGET:
+    MEDV     → Median value of owner-occupied homes in $1000s
+    Range    : $5,000 (cheapest) to $50,000 (most expensive)
+    Average  : ~$22,500
+
+
+================================================================
+CELL 3 — EXPLORING HOUSE PRICES (EDA)
+================================================================
+
+CODE:
+    correlations = df.corr()['MEDV'].sort_values(ascending=False)
+
+WHAT IT DOES:
+--------------
+
+df.corr()
+    - Calculates the correlation between ALL pairs of columns
+    - Correlation ranges from -1.0 to +1.0:
+        +1.0 = perfect positive relationship (both go up together)
+         0.0 = no relationship at all
+        -1.0 = perfect negative relationship (one goes up, other goes down)
+
+['MEDV']
+    - Selects only the correlations WITH the target (house price)
+    - Shows which features are most related to price
+
+.sort_values(ascending=False)
+    - Sorts from most positively correlated to most negatively
+
+KEY FINDINGS:
+    RM     +0.70  → More rooms = much higher price (strong positive)
+    LSTAT  -0.74  → More poverty = much lower price (strong negative)
+    CRIM   -0.39  → More crime = lower price (moderate negative)
+
+axes[0].axvline(df['MEDV'].mean(), ...)
+    - Draws a vertical line at the mean price on the histogram
+    - axvline = axis vertical line
+    - Helps visualise where the average house price falls
+
+axes[1].scatter(df['RM'], df['MEDV'], alpha=0.6)
+    - Scatter plot: x=rooms, y=price
+    - alpha=0.6 = 60% opacity (see overlapping points)
+    - Visually confirms: more rooms = higher price relationship
+
+
+================================================================
+CELL 4 — PREPARING DATA FOR ML
+================================================================
+
+CODE:
+    X = df.drop('MEDV', axis=1)
+    y = df['MEDV']
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42)
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled  = scaler.transform(X_test)
+
+WHAT IT DOES:
+--------------
+
+X = df.drop('MEDV', axis=1)
+    - X = features (everything except the price)
+    - 13 columns: CRIM, ZN, INDUS... all measurements about the house
+
+y = df['MEDV']
+    - y = target (the price we want to predict)
+    - This is what the model learns to output
+
+train_test_split without stratify
+    - Notice: no stratify=y this time!
+    - stratify is only for CLASSIFICATION (to keep class ratios)
+    - For REGRESSION, y is continuous (any number) — can't stratify
+    - We just split randomly: 80% train, 20% test
+
+StandardScaler
+    - Same as Project 1 — scales all features to mean=0, std=1
+    - Very important for Linear Regression and KNN
+    - Decision Tree doesn't need scaling (but doesn't hurt)
+    - Golden Rule: fit on train only, transform both train and test
+
+RESULT:
+    Training: 404 houses
+    Testing:  102 houses
+    Mean: -0.00000 (perfectly centered)
+    Std:   1.00000 (perfectly scaled)
+
+
+================================================================
+CELL 5 — TRAINING 3 REGRESSION MODELS
+================================================================
+
+CODE:
+    models = {
+        'Linear Regression'    : LinearRegression(),
+        'Polynomial Regression': Pipeline([
+            ('poly',   PolynomialFeatures(degree=2)),
+            ('linear', LinearRegression())
+        ]),
+        'Decision Tree': DecisionTreeRegressor(max_depth=5, random_state=42),
+    }
+
+WHAT EACH MODEL DOES:
+----------------------
+
+--- MODEL 1: LINEAR REGRESSION ---
+LinearRegression()
+
+    What it is:
+        Fits a straight line (or hyperplane in multiple dimensions)
+        through the data to predict house prices
+        Formula: price = w1*CRIM + w2*RM + w3*LSTAT + ... + bias
+
+    How it learns:
+        Finds the weights (w1, w2...) that minimise MSE
+        Uses the Ordinary Least Squares (OLS) method
+        Closed-form solution — no iteration needed, very fast!
+
+    Limitation:
+        Can only model LINEAR relationships
+        If price and rooms have a curved relationship → Linear fails
+
+    RESULT: R² = 0.6688 (explains 66.9% of variance)
+    Translation: Decent but misses complex patterns
+
+--- MODEL 2: POLYNOMIAL REGRESSION ---
+Pipeline([
+    ('poly',   PolynomialFeatures(degree=2)),
+    ('linear', LinearRegression())
+])
+
+    What it is:
+        Extends Linear Regression to fit CURVED relationships
+        Creates new features: RM², CRIM², RM×LSTAT, etc.
+        Then fits a linear model on these new features
+
+    PolynomialFeatures(degree=2)
+        - Takes original 13 features
+        - Creates all combinations up to degree 2
+        - Results in many more features (13 → 105 features!)
+        - This allows curved fit without changing the linear model
+
+    Pipeline
+        - Step 1: Transform features (add polynomial terms)
+        - Step 2: Fit Linear Regression on transformed features
+        - Treated as one model — clean and prevents data leakage
+
+    RESULT: R² = 0.8056 (explains 80.6% of variance)
+    Translation: Much better! Curved relationships captured
+
+--- MODEL 3: DECISION TREE REGRESSOR ---
+DecisionTreeRegressor(max_depth=5, random_state=42)
+
+    What it is:
+        Makes predictions by asking a series of YES/NO questions
+        Each leaf node returns the AVERAGE price of training houses
+        that ended up in that leaf after all the splits
+
+    How it differs from classifier version:
+        Instead of majority vote → takes average of target values
+        Splits are chosen to minimise MSE (not Gini impurity)
+
+    max_depth=5
+        - Maximum 5 levels of questions
+        - Prevents overfitting
+        - Without limit: tree memorises every house → fails on new data
+
+    Why it won:
+        Captures non-linear AND interaction effects between features
+        Example: "If RM > 7 AND LSTAT < 5 AND CRIM < 0.1 → very expensive"
+        Linear models cannot capture these 3-way interactions!
+
+    RESULT: R² = 0.8834 (explains 88.3% of variance)
+    Translation: Best model! Captures complex price patterns
+
+THE 3 REGRESSION METRICS EXPLAINED:
+
+    R² Score (R-squared)
+        Formula: 1 - (SS_residual / SS_total)
+        Range: 0.0 to 1.0 (can be negative for very bad models)
+        Meaning: What % of price variation does model explain?
+        Our best: 0.8834 = 88.34% explained ✅
+
+    MAE (Mean Absolute Error)
+        Formula: average(|predicted - actual|)
+        Meaning: On average, predictions are off by $X
+        More intuitive for business understanding
+        Example: MAE=$3,000 means predictions off by $3k on average
+
+    RMSE (Root Mean Squared Error)
+        Formula: sqrt(average((predicted - actual)²))
+        Meaning: Similar to MAE but penalises big errors more
+        Always >= MAE
+        Use when large errors are especially costly
+
+Cross-Validation (cv=5, scoring='r2')
+    - Same as Project 1 but scoring R² instead of F1
+    - Trains 5 times on different portions of training data
+    - Gives reliable estimate of real-world performance
+    - cv_r2 ± cv_std shows consistency of the model
+
+
+================================================================
+CELL 6 — ACTUAL VS PREDICTED CHART
+================================================================
+
+CODE:
+    ax.scatter(y_test, y_pred, alpha=0.6, color=color)
+    ax.plot([min_val, max_val], [min_val, max_val], 'white',
+            linewidth=2, linestyle='--')
+
+WHAT IT DOES:
+--------------
+
+ax.scatter(y_test, y_pred)
+    - X-axis = actual house prices (ground truth)
+    - Y-axis = predicted house prices (model output)
+    - Each dot = one house from the test set
+
+The white dashed diagonal line
+    - Represents PERFECT predictions (predicted = actual)
+    - If a dot sits ON the line → perfect prediction
+    - If a dot is ABOVE the line → model over-predicted
+    - If a dot is BELOW the line → model under-predicted
+
+HOW TO READ THE CHART:
+    Linear Regression   → Dots scattered loosely around line
+    Polynomial          → Dots tighter around the line
+    Decision Tree       → Dots CLOSEST to the line = best! ✅
+
+This visual instantly shows which model performs best —
+much more intuitive than just comparing R² numbers!
+
+
+================================================================
+CELL 7 — FEATURE IMPORTANCE
+================================================================
+
+CODE:
+    importances = dt_model.feature_importances_
+    indices = np.argsort(importances)[::-1]
+
+WHAT IT DOES:
+--------------
+
+feature_importances_
+    - Property of trained Decision Tree
+    - Shows how much each feature contributed to predictions
+    - All values sum to 1.0 (100%)
+    - Higher = more important for predicting price
+
+TOP 3 RESULTS:
+    RM      → Rooms — most important positive driver
+    LSTAT   → Poverty % — most important negative driver
+    CRIM    → Crime rate — third most important
+
+REAL WORLD INSIGHTS:
+    RM (rooms)
+        More rooms = bigger house = more expensive
+        Obvious but ML confirmed it mathematically!
+
+    LSTAT (poverty %)
+        Neighbourhood wealth is a massive price driver
+        Poor neighbourhood → low demand → low prices
+
+    CRIM (crime rate)
+        High crime areas see significantly lower prices
+        People pay premium for safety and security
+
+    PTRATIO (school quality)
+        Better schools (lower ratio) = higher prices
+        Families pay premium to be in good school districts
+
+    NOX (air pollution)
+        Cleaner air = more desirable = higher prices
+        Environmental quality affects property values
+
+
+================================================================
+CELL 8 — HOUSE PRICE PREDICTOR TOOL
+================================================================
+
+CODE:
+    def predict_house_price(crim, rm, lstat, ...):
+        house = medians.copy()
+        house['CRIM']  = crim
+        house['RM']    = rm
+        house['LSTAT'] = lstat
+        house_scaled = scaler.transform([house])
+        price = models['Decision Tree'].predict(house_scaled)[0]
+        return price
+
+WHAT IT DOES:
+--------------
+
+def predict_house_price(...)
+    - Creates a reusable function to predict any house price
+    - Takes key inputs: crime rate, rooms, poverty %
+    - This makes the project PRODUCT-LIKE — a real usable tool!
+
+medians.copy()
+    - Gets median values of all 13 features as baseline
+    - For features we don't specify, uses typical Boston values
+    - This way user only needs to specify the most important features
+
+scaler.transform([house])
+    - Scales the input using the SAME scaler fitted on training data
+    - This is critical — must use same scaling for predictions to work!
+    - [house] wraps it in a list because scaler expects 2D input
+
+models['Decision Tree'].predict(house_scaled)[0]
+    - Uses our best trained model to make the prediction
+    - [0] takes the first (and only) prediction from the array
+
+PREDICTION RESULTS:
+    🏚️  Cheap House    (crime=10, rooms=4.5, lstat=25) → $13,170
+    🏠  Average House  (crime=0.5, rooms=6.0, lstat=12) → $20,356
+    🏡  Expensive House(crime=0.02, rooms=8.0, lstat=3) → $35,200
+
+INSIGHT:
+    Expensive house is 2.7x the price of cheap house!
+    This matches real estate market patterns perfectly.
+    The model learned true economic relationships from data.
+
+
+================================================================
+KEY CONCEPTS USED IN THIS PROJECT
+================================================================
+
+1. REGRESSION vs CLASSIFICATION
+   Regression  = predict a number (price, temperature, salary)
+   Classification = predict a category (yes/no, spam/not spam)
+
+2. LINEAR REGRESSION
+   Fits a straight line through data
+   Fast, interpretable, but limited to linear relationships
+
+3. POLYNOMIAL REGRESSION
+   Extends linear to fit curves
+   More powerful but risk of overfitting at high degrees
+
+4. DECISION TREE REGRESSOR
+   Asks yes/no questions to navigate to a prediction
+   Captures non-linear and interaction effects
+   Best performer here at 88.3% R²
+
+5. PIPELINE
+   Chains preprocessing + model into one object
+   Prevents data leakage in cross-validation
+
+6. R² SCORE
+   Primary metric for regression
+   How much variance in price our model explains
+
+7. MAE & RMSE
+   How far off predictions are in dollar terms
+   MAE more intuitive, RMSE penalises large errors more
+
+8. FEATURE IMPORTANCE
+   Which measurements matter most for predictions
+   Gives real-world insights, not just numbers
+
+9. ACTUAL VS PREDICTED PLOT
+   Visual confirmation of model quality
+   Dots near diagonal line = good predictions
+
+
+================================================================
+COMPARISON WITH PROJECT 1
+================================================================
+
+                    PROJECT 1              PROJECT 2
+                    Exoplanet Hunter       Real Estate Predictor
+--------------------------------------------------------------------
+Type              : Classification         Regression
+Target            : 0 or 1 (planet/not)   $5k - $50k (price)
+Dataset           : NASA Kepler            Boston Housing
+Samples           : 9,564 stars            506 houses
+Main Metric       : AUC Score (0.999)      R² Score (0.8834)
+Best Model        : Logistic Regression    Decision Tree
+Key Feature       : koi_score (96.4%)      RM + LSTAT + CRIM
+Domain            : Space / Astronomy      Real Estate / Economics
+Imbalanced Data   : Yes (handled)          No
+Scaling Needed    : Yes (KNN, LR)          Yes (LR, Poly)
+
+
+================================================================
+FINAL RESULTS
+================================================================
+
+Model                    R² Score    MAE           RMSE
+------------------------------------------------------------
+Linear Regression        0.6688      ~$4,300       ~$5,700
+Polynomial Regression    0.8056      ~$3,200       ~$4,300
+Decision Tree            0.8834      ~$2,500       ~$3,400
+
+Best Model: Decision Tree (R² = 0.8834)
+
+Price Predictions:
+    Cheap House     → $13,170
+    Average House   → $20,356
+    Expensive House → $35,200
+
+
+================================================================
+WHY THIS PROJECT IMPRESSES RECRUITERS
+================================================================
+
+1. REGRESSION SKILLS — Shows you can do both classification
+   AND regression — covering the two pillars of supervised ML
+
+2. MODEL PROGRESSION — Linear → Polynomial → Tree shows you
+   understand WHY each model is more powerful than the last
+
+3. PRODUCT THINKING — predict_house_price() function makes
+   this a real usable tool, not just an analysis notebook
+
+4. ECONOMIC INSIGHTS — Discovered that rooms, poverty %, and
+   crime are the top price drivers — real business value!
+
+5. VISUALISATION — Actual vs Predicted plot is immediately
+   understandable to non-technical stakeholders
+
+6. COMPLETE PIPELINE — Raw CSV → cleaned data → trained model
+   → predictions → insights. End to end!
+
+7. DOMAIN DIVERSITY — Space (Project 1) + Real Estate (Project 2)
+   shows you can apply ML across completely different domains
+
+
+================================================================
+Built by: Kartik | Munich | 2025
+Goal: AGI & Conscious AI | Building One Project at a Time 🚀
+================================================================
